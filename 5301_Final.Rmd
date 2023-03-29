@@ -1,0 +1,433 @@
+---
+title: "Analysis Sex and Age of Perpetrator and Victim in NYC Shootings"
+subtitle: "NYPD Shooting Incident Report"
+date: "2023-03-28"
+output: pdf_document
+---
+Need tidyverse, lubridate, dplyr, zoo, and timetk libraries.
+
+```{r libraries, echo=FALSE}
+library(tidyverse, quietly = TRUE)
+library(lubridate, quietly = TRUE)
+library(dplyr, quietly = TRUE)
+library(zoo, quietly = TRUE)
+library(timetk, quietly = TRUE)
+```
+
+## Import NYPD Shooting Incident Data (Historic)
+This data is a list of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year. This data set has information about each shooting describing the borough, victim age, victim sex, victim race, if the victim died, etc. Some shootings have location descriptions, perpetrator race, perpetrator age, and perpetrator sex. The data set can be imported from "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv".
+```{r import_data, echo=TRUE}
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv"
+nypd_shooting_data <- read_csv(url)
+nypd_shooting_data
+```
+
+## Summarize and Clean Data
+Before cleaning the data, not much information can be pulled from the summary as most columns are characters and not factors.
+```{r initial_summary}
+summary(nypd_shooting_data)
+```
+
+Clean and wrangle the data by 
+
+* Converting date column from character to date objects
+* Removing unnecessary columns
+* Remove age groups that don't make sense (1020, 940, and 224)
+* Converting categorical entries to factors
+```{r clean_data}
+nypd_shooting_data <- nypd_shooting_data %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE)) %>%
+  select(-c(X_COORD_CD, Y_COORD_CD, Latitude, Longitude, Lon_Lat)) %>%
+  subset(PERP_AGE_GROUP != 224) %>%
+  subset(PERP_AGE_GROUP != 940) %>%
+  subset(PERP_AGE_GROUP != 1020)
+cols <- c("INCIDENT_KEY",
+          "BORO",
+          "PRECINCT",
+          "JURISDICTION_CODE",
+          "LOCATION_DESC",
+          "PERP_AGE_GROUP",
+          "PERP_SEX",
+          "PERP_RACE",
+          "VIC_AGE_GROUP",
+          "VIC_SEX",
+          "VIC_RACE")
+nypd_shooting_data[cols] <- lapply(nypd_shooting_data[cols], factor)
+nypd_shooting_data$STATISTICAL_MURDER_FLAG <- as.logical(
+  nypd_shooting_data$STATISTICAL_MURDER_FLAG)
+```
+
+A summary of the data is produced after cleaning. The data describes shootings occuring between 01-01-2006 through 12-31-2021. There are total shooting counts for the varying boros, precincts, jurisdiction codes, location descriptions. There is also information about how many shootings resulted in the death of the victim. There are also total counts for victim and perpetrator age, race, and sex. 
+```{r clean_summary}
+summary(nypd_shooting_data)
+```
+Some perpetrator and victim information is missing. As we perform analyses, rows will be removed, if we are describing known perpetrator information. If we are analyzing other columns, we will leave the data in. 
+
+## Analysis of Sex and Age of Perpetrator and Victim in NYC Shootings
+We produce a plot that displays the total shooting count for the varying pairings of perpetrator sex and victim sex classifications. The colors of the plot display the number of shootings that did or did not result in death of the victim. 
+``` {r perpetrator_victim_sex_barplot}
+perp_vic_sex <- nypd_shooting_data %>%
+  mutate(PERP_SEX_VIC_SEX = str_c(PERP_SEX, " - ", VIC_SEX)) %>%
+  select(PERP_SEX_VIC_SEX, STATISTICAL_MURDER_FLAG)
+colnames(perp_vic_sex)[2] <- "DEATH_OCCURRED"
+
+perp_vic_sex %>% ggplot(aes(PERP_SEX_VIC_SEX, fill = DEATH_OCCURRED)) +
+  geom_bar() +
+  ggtitle("Perpetrator Sex - Victim Sex Ratio") +
+  xlab("Perpetrator Sex - Victim Sex ; M=male, F=female, U=unknown") +
+  ylab("Shooting count")
+```
+Given the plot, it is clear that the pairing of male perpetrator and male victim (M-M) has the most number of shootings compared to other pairings of perpetrator and victim sex. For each pairing of sexes, most shootings do not result in murder. Looking only at the victim sex:
+
+``` {r victim_sex_barplot}
+vic_sex <- nypd_shooting_data %>%
+  select(VIC_SEX, STATISTICAL_MURDER_FLAG)
+colnames(vic_sex)[2] <- "DEATH_OCCURRED"
+
+vic_sex %>% ggplot(aes(VIC_SEX, fill = DEATH_OCCURRED)) +
+  geom_bar() +
+  ggtitle("Victim Sex Death Ratio") +
+  xlab("Victim Sex ; M=male, F=female, U=unknown") +
+  ylab("Shooting count")
+```
+We see that there is not a significant difference in the ratio of shootings resulting in death depending on the sex of the victim.
+
+----------------------------------------------------------------------------------------------
+
+We produce a plot that displays the total shooting count for when the perpetrator is younger, in the same age group, or older than the victim. The colors of the plot display the number of shootings that did or did not result in death of the victim. 
+``` {r perpetrator_victim_age_barplot}
+perp_vic_age <- nypd_shooting_data %>%
+  select(PERP_AGE_GROUP, VIC_AGE_GROUP, STATISTICAL_MURDER_FLAG)
+
+colnames(perp_vic_age)[3] <- "DEATH_OCCURRED"
+
+perp_vic_age$PERP_AGE_GROUP <- as.character(perp_vic_age$PERP_AGE_GROUP)
+perp_vic_age$VIC_AGE_GROUP <- as.character(perp_vic_age$VIC_AGE_GROUP)
+
+perp_vic_age <- perp_vic_age[perp_vic_age$VIC_AGE_GROUP != "UNKNOWN", ]
+perp_vic_age <- perp_vic_age[perp_vic_age$PERP_AGE_GROUP != "UNKNOWN", ]
+
+perp_vic_age %>% mutate(PERP_AGE_GROUP = recode(PERP_AGE_GROUP,
+                                                "<18" = 1,
+                                                "18-24" = 2,
+                                                "25-44" = 3,
+                                                "45-64" = 4,
+                                                "65+" = 5))
+
+perp_vic_age %>% mutate(VIC_AGE_GROUP = recode(VIC_AGE_GROUP,
+                                                "<18" = 1,
+                                                "18-24" = 2,
+                                                "25-44" = 3,
+                                                "45-64" = 4,
+                                                "65+" = 5))
+
+perp_vic_age$PERP_TO_VIC_AGE <-
+  ifelse(perp_vic_age$PERP_AGE_GROUP > perp_vic_age$VIC_AGE_GROUP,
+         "Older",
+         ifelse(perp_vic_age$PERP_AGE_GROUP < perp_vic_age$VIC_AGE_GROUP,
+                "Younger",
+                "Same"))
+
+perp_vic_age %>% ggplot(aes(PERP_TO_VIC_AGE, fill = DEATH_OCCURRED)) +
+  geom_bar() +
+  ggtitle("Perpetrator Age in Relation to Victim Age") +
+  ylab("Shooting count")
+```
+This plot displays that there are more shootings where the perpetrator is a similar age to the victim compared to where there is a larger age gap, older or younger. 
+
+Since the ratio of shootings resulting in death and not appears to be similar across age and sex relationships of perpetrator and victim, let's look at the trend of shootings over time as it relates to the age and sex of the perpetrator and victim.
+
+
+### Analyze the trend of total shootings over time as it relates to the age and sex of the perpetrator and victim.
+
+Get cumulative data of shootings where the victim is male. 
+``` {r male_vic_cumulative}
+male_vic_data <- nypd_shooting_data[nypd_shooting_data$VIC_SEX == "M", ]
+male_vic_cumulative <- male_vic_data$OCCUR_DATE %>%
+  table() %>%
+  as.data.frame() %>%
+  mutate(total = cumsum(Freq)) %>%
+  rename(MALE_VIC = "total", OCCUR_DATE = ".") %>%
+  select(OCCUR_DATE, MALE_VIC)
+```
+
+Get cumulative data of shootings where the perpetrator is male. 
+``` {r male_perp_cumulative}
+male_perp_data <- nypd_shooting_data[nypd_shooting_data$PERP_SEX == "M", ]
+male_perp_cumulative <- male_perp_data$OCCUR_DATE %>%
+  table() %>%
+  as.data.frame() %>%
+  mutate(total = cumsum(Freq)) %>%
+  rename(MALE_PERP = "total", OCCUR_DATE = ".") %>%
+  select(OCCUR_DATE, MALE_PERP)
+```
+
+Get cumulative data of shootings where the victim is female. 
+``` {r female_vic_cumulative}
+female_vic_data <- nypd_shooting_data[nypd_shooting_data$VIC_SEX == "F", ]
+female_vic_cumulative <- female_vic_data$OCCUR_DATE %>%
+  table() %>%
+  as.data.frame() %>%
+  mutate(total = cumsum(Freq)) %>%
+  rename(FEMALE_VIC = "total", OCCUR_DATE = ".") %>%
+  select(OCCUR_DATE, FEMALE_VIC)
+```
+
+Get cumulative data of shootings where the perpetrator is female. 
+``` {r female_perp_cumulative}
+female_perp_data <- nypd_shooting_data[nypd_shooting_data$PERP_SEX == "F", ]
+female_perp_cumulative <- female_perp_data$OCCUR_DATE %>%
+  table() %>%
+  as.data.frame() %>%
+  mutate(total = cumsum(Freq)) %>%
+  rename(FEMALE_PERP = "total", OCCUR_DATE = ".") %>%
+  select(OCCUR_DATE, FEMALE_PERP)
+```
+
+Get cumulative data for sex of perpetrators and victims in a summary data frame.
+``` {r cumulative}
+shooting_sex_summary <- list(male_vic_cumulative,
+                             female_vic_cumulative,
+                             female_perp_cumulative,
+                             male_perp_cumulative) %>%
+  reduce(full_join, by = "OCCUR_DATE") %>%
+  as.data.frame()
+shooting_sex_summary$OCCUR_DATE <- as.Date(shooting_sex_summary$OCCUR_DATE,
+                                       format = "%Y-%m-%d")
+shooting_sex_summary <- shooting_sex_summary[order(
+  shooting_sex_summary$OCCUR_DATE,
+  decreasing = FALSE), ] %>%
+  na.locf()
+```
+
+Visualize the trends of the total number of shootings dependent on sex over time.
+``` {r visualize_cumulative_sum}
+shooting_sex_summary %>%
+  ggplot(aes(x = OCCUR_DATE, y = MALE_VIC)) +
+  geom_line(aes(color = "Male Victim")) +
+  geom_line(aes(y = FEMALE_VIC, color = "Female Victim")) +
+  geom_line(aes(y = MALE_PERP, color = "Male Perpetrator")) +
+  geom_line(aes(y = FEMALE_PERP, color = "Female Perpetrator")) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "Total Shooting by Sex from 2006 to 2022", y = NULL)
+```
+The graph displays that there are many more male victims and perpetrators compared to female. It appears that the male victim and perpetrator lines follow each other very closely. There are some unknown perpetrator and victim sex entries in the data, so there is bias within the data presented in the graph as those entries are not accounted for. Now, let's evaluate the relationship between total shootings per age group. 
+
+Get cumulative data of shootings where the victim is <18, or a child. 
+``` {r child_vic_cumulative}
+child_vic_data <- nypd_shooting_data[
+  nypd_shooting_data$VIC_AGE_GROUP == "<18",
+  ]
+child_vic_cumulative <- child_vic_data$OCCUR_DATE %>%
+  table() %>%
+  as.data.frame() %>%
+  mutate(total = cumsum(Freq)) %>%
+  rename(CHILD_VIC = "total", OCCUR_DATE = ".") %>%
+  select(OCCUR_DATE, CHILD_VIC)
+```
+
+Get cumulative data of shootings where the victim is 18-24, or a young adult (YA). 
+``` {r ya_vic_cumulative}
+ya_vic_data <- nypd_shooting_data[nypd_shooting_data$VIC_AGE_GROUP == "18-24", ]
+ya_vic_cumulative <- ya_vic_data$OCCUR_DATE %>%
+  table() %>%
+  as.data.frame() %>%
+  mutate(total = cumsum(Freq)) %>%
+  rename(YA_VIC = "total", OCCUR_DATE = ".") %>%
+  select(OCCUR_DATE, YA_VIC)
+```
+
+Get cumulative data of shootings where the victim is 25-44, or an adult (A). 
+``` {r a_vic_cumulative}
+a_vic_data <- nypd_shooting_data[nypd_shooting_data$VIC_AGE_GROUP == "25-44", ]
+a_vic_cumulative <- a_vic_data$OCCUR_DATE %>%
+  table() %>%
+  as.data.frame() %>%
+  mutate(total = cumsum(Freq)) %>%
+  rename(A_VIC = "total", OCCUR_DATE = ".") %>%
+  select(OCCUR_DATE, A_VIC)
+```
+
+Get cumulative data of shootings where the victim is 45-64, or an older adult (OA). 
+``` {r oa_vic_cumulative}
+oa_vic_data <- nypd_shooting_data[nypd_shooting_data$VIC_AGE_GROUP == "45-64", ]
+oa_vic_cumulative <- oa_vic_data$OCCUR_DATE %>%
+  table() %>%
+  as.data.frame() %>%
+  mutate(total = cumsum(Freq)) %>%
+  rename(OA_VIC = "total", OCCUR_DATE = ".") %>%
+  select(OCCUR_DATE, OA_VIC)
+```
+
+Get cumulative data of shootings where the victim is 65+, or an elder (E). 
+``` {r e_vic_cumulative}
+e_vic_data <- nypd_shooting_data[nypd_shooting_data$VIC_AGE_GROUP == "65+", ]
+e_vic_cumulative <- e_vic_data$OCCUR_DATE %>%
+  table() %>%
+  as.data.frame() %>%
+  mutate(total = cumsum(Freq)) %>%
+  rename(E_VIC = "total", OCCUR_DATE = ".") %>%
+  select(OCCUR_DATE, E_VIC)
+```
+
+Get cumulative data for age of victims in a summary data frame.
+``` {r vic_age_cumulative}
+shooting_age_summary <- list(child_vic_cumulative,
+                             ya_vic_cumulative,
+                             a_vic_cumulative,
+                             oa_vic_cumulative,
+                             e_vic_cumulative) %>%
+  reduce(full_join, by = "OCCUR_DATE") %>%
+  as.data.frame()
+shooting_age_summary$OCCUR_DATE <- as.Date(shooting_age_summary$OCCUR_DATE,
+                                       format = "%Y-%m-%d")
+shooting_age_summary <- shooting_age_summary[order(
+  shooting_age_summary$OCCUR_DATE,
+  decreasing = FALSE), ] %>%
+  na.locf()
+```
+
+Visualize the trends of the total number of shootings dependent on victim age over time.
+``` {r visualize_cumulative_sum_vic_age}
+shooting_age_summary %>%
+  ggplot(aes(x = OCCUR_DATE, y = CHILD_VIC)) +
+  geom_line(aes(color = "Child Victim (<18)")) +
+  geom_line(aes(y = YA_VIC, color = "Young Adult Victim (18-24)")) +
+  geom_line(aes(y = A_VIC, color = "Adult Victim (25-44)")) +
+  geom_line(aes(y = OA_VIC, color = "Older Adult Victim (45-64)")) +
+  geom_line(aes(y = E_VIC, color = "Elderly Victim (65+)")) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "Total Shooting by Victim Age from 2006 to 2022", y = NULL)
+```
+The number of young adult and adult victims in shootings is consistently greater than the number of child, older adult, and elderly victims. While the total adult and young adult victims seemed to be pretty consistent, in 2017, the number of adult victims exceeded the number of young adult victims.
+
+Get cumulative data of shootings where the perpetrator is <18, or a child. 
+``` {r child_perp_cumulative}
+child_perp_data <- nypd_shooting_data[
+  nypd_shooting_data$PERP_AGE_GROUP == "<18",
+  ]
+child_perp_cumulative <- child_perp_data$OCCUR_DATE %>%
+  table() %>%
+  as.data.frame() %>%
+  mutate(total = cumsum(Freq)) %>%
+  rename(CHILD_PERP = "total", OCCUR_DATE = ".") %>%
+  select(OCCUR_DATE, CHILD_PERP)
+```
+
+Get cumulative data of shootings where the perpetrator is 18-24, or a young adult (YA). 
+``` {r ya_perp_cumulative}
+ya_perp_data <- nypd_shooting_data[
+  nypd_shooting_data$PERP_AGE_GROUP == "18-24",
+  ]
+ya_perp_cumulative <- ya_perp_data$OCCUR_DATE %>%
+  table() %>%
+  as.data.frame() %>%
+  mutate(total = cumsum(Freq)) %>%
+  rename(YA_PERP = "total", OCCUR_DATE = ".") %>%
+  select(OCCUR_DATE, YA_PERP)
+```
+
+Get cumulative data of shootings where the perpetrator is 25-44, or an adult (A). 
+``` {r a_perp_cumulative}
+a_perp_data <- nypd_shooting_data[
+  nypd_shooting_data$PERP_AGE_GROUP == "25-44",
+  ]
+a_perp_cumulative <- a_perp_data$OCCUR_DATE %>%
+  table() %>%
+  as.data.frame() %>%
+  mutate(total = cumsum(Freq)) %>%
+  rename(A_PERP = "total", OCCUR_DATE = ".") %>%
+  select(OCCUR_DATE, A_PERP)
+```
+
+Get cumulative data of shootings where the perpetrator is 45-64, or an older adult (OA). 
+``` {r oa_perp_cumulative}
+oa_perp_data <- nypd_shooting_data[
+  nypd_shooting_data$PERP_AGE_GROUP == "45-64",
+  ]
+oa_perp_cumulative <- oa_perp_data$OCCUR_DATE %>%
+  table() %>%
+  as.data.frame() %>%
+  mutate(total = cumsum(Freq)) %>%
+  rename(OA_PERP = "total", OCCUR_DATE = ".") %>%
+  select(OCCUR_DATE, OA_PERP)
+```
+
+Get cumulative data of shootings where the perpetrator is 65+, or an elder (E). 
+``` {r e_perp_cumulative}
+e_perp_data <- nypd_shooting_data[
+  nypd_shooting_data$PERP_AGE_GROUP == "65+",
+  ]
+e_perp_cumulative <- e_perp_data$OCCUR_DATE %>%
+  table() %>%
+  as.data.frame() %>%
+  mutate(total = cumsum(Freq)) %>%
+  rename(E_PERP = "total", OCCUR_DATE = ".") %>%
+  select(OCCUR_DATE, E_PERP)
+```
+
+Get cumulative data for age of perpetrators in a summary data frame.
+``` {r cumulative_perp_age}
+shooting_age_summary <- list(child_perp_cumulative,
+                             ya_perp_cumulative,
+                             a_perp_cumulative,
+                             oa_perp_cumulative,
+                             e_perp_cumulative) %>%
+  reduce(full_join, by = "OCCUR_DATE") %>%
+  as.data.frame()
+shooting_age_summary$OCCUR_DATE <- as.Date(shooting_age_summary$OCCUR_DATE,
+                                       format = "%Y-%m-%d")
+shooting_age_summary <- shooting_age_summary[order(
+  shooting_age_summary$OCCUR_DATE,
+  decreasing = FALSE), ] %>%
+  na.locf()
+```
+
+Visualize the trends of the total number of shootings dependent on perpetrator age over time.
+``` {r visualize_cumulative_sum_perp_age}
+shooting_age_summary %>%
+  ggplot(aes(x = OCCUR_DATE, y = CHILD_PERP)) +
+  geom_line(aes(color = "Child Perpetrator (<18)")) +
+  geom_line(aes(y = YA_PERP, color = "Young Adult Perpetrator (18-24)")) +
+  geom_line(aes(y = A_PERP, color = "Adult Perpetrator (25-44)")) +
+  geom_line(aes(y = OA_PERP, color = "Older Adult Perpetrator (45-64)")) +
+  geom_line(aes(y = E_PERP, color = "Elderly Perpetrator (65+)")) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "Total Shooting by Perpetrator Age from 2006 to 2022", y = NULL)
+```
+Similar to the trends in total victim age ranges for shootings, young adult and adult shooting perpetrators far exceed that of the child, older adult, and elderly perpetrators. Let's model the total number of adult perpetrators over time. 
+
+### Model Adult (25-44) Perpetrator Shooting Counts with a Linear Model
+``` {r linear_model}
+a_perp_cumulative$OCCUR_DATE <- as.numeric(a_perp_cumulative$OCCUR_DATE)
+a_perp_cumulative <- a_perp_cumulative %>%
+  mutate(OCCUR_DATE = OCCUR_DATE)
+time <- a_perp_cumulative$OCCUR_DATE
+
+linear_model <- lm(a_perp_cumulative$A_PERP ~ time)
+summary(linear_model)
+```
+This model results in 
+total_adult_perps = 56.26 + 1.824 * time
+Plot the model
+``` {r plot_model}
+
+a_perp_cumulative <- a_perp_cumulative %>% mutate(pred = predict(linear_model))
+a_perp_cumulative %>%
+  ggplot() +
+  geom_line(aes(x = OCCUR_DATE,
+                y = A_PERP,
+                color = "Adult Perpetrators")) +
+  geom_line(aes(x = OCCUR_DATE,
+                y = pred,
+                color = "Predicted Adult Perpetrators"))
+```
+Although this model matches very closely to the data, there is bias within the model as the data lacks information about the age of all perpetrators, so the model could be underrepresenting the total number of adult perpetrators involved in shootings in New York City. 
+
+--------------------------------------------------------
+``` {r sessionInfo}
+sessionInfo()
+```
